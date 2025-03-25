@@ -1,0 +1,53 @@
+{% assign init_pbx_product_id = product.selected_or_first_available_variant.metafields.printbox.product_id | default: product.metafields.printbox.product_id.value
+%}
+{% assign init_pbx_product_family_id = product.selected_or_first_available_variant.metafields.printbox.product_family_id | default: product.metafields.printbox.product_family_id.value
+%}
+{% assign init_pbx_module_id = product.selected_or_first_available_variant.metafields.printbox.module_id | default: product.metafields.printbox.module_id.value
+%}
+{% assign pbxMetafields = product.variants | map: 'metafields' | map: 'printbox' %}
+
+<div id="app"></div>
+
+<script type="module">
+  import { printboxModuleInitializer } from "printbox";
+  import { PbxProductVariantHandler } from "pbx-product-variant-handler";
+  import { PbxEditorConfigState } from "pbx-editor-config-state";
+
+  const getLocale = () => `{{ localization.language.iso_code }}-{{ localization.country.iso_code }}`;
+
+  const shopifyConfigProvider = () => ({
+    apiUrl: '{{ shop.metafields.printbox.api_url2 }}',
+    pbxApiUrl: "{{ shop.metafields.printbox.url }}",
+    shopId: "{{ shop.metafields.printbox.shop_id }}",
+    variantId: '{{ product.selected_or_first_available_variant.id }}',
+    instanceId: '{{ shop.metafields.printbox.instance_id }}',
+    customerEmail: '{{ customer.email }}',
+    customerId: '{{ customer.id }}',
+    pbxMetafieldCustomerId: '{{ customer.metafields.printbox.customer_id }}',
+    initPbxModuleId: "{{ init_pbx_module_id }}",
+    initPbxProductId: "{{ init_pbx_product_id }}",
+    initPbxProductFamilyId: "{{ init_pbx_product_family_id }}",
+    shopCurrency: "{{ shop.currency }}",
+    language: "{{ localization.language.iso_code }}",
+    locale: getLocale(),
+    storeName: '{{ shop.metafields.printbox.store_name }}',
+    variantAttributeValues: '{{ product.selected_or_first_available_variant.metafields.printbox.attribute_values_dict }}'
+  });
+
+  const productVariantsProvider = () => ({
+    productVariants: Array.from({{ product.variants | json }}),
+    pbxProductVariantsMetafields: Array.from({{ pbxMetafields | json }}),
+    productPrintboxMetafields: JSON.parse('{{ product.metafields.printbox | json }}')
+  });
+
+
+  const { initializePrintboxEditor } = printboxModuleInitializer(shopifyConfigProvider);
+
+  initializePrintboxEditor();
+
+  const pbxProductVariantHandler = new PbxProductVariantHandler(productVariantsProvider, PbxEditorConfigState);
+
+  subscribe(PUB_SUB_EVENTS.variantChange, (event) => {
+    pbxProductVariantHandler.onVariantChangeEvent(event.data.variant.id);
+  });
+</script>

@@ -1,0 +1,603 @@
+{{ 'pbx-project-list.css' | asset_url | stylesheet_tag }}
+{{ 'product-modal.css' | asset_url | stylesheet_tag }}
+
+<script type="module">
+  import { printboxModuleInitializer } from "printbox";
+  import { PbxProjectsApiRepository } from "pbx-projects-api-repository";
+  import { PbxProjectAttributesExtractors } from "pbx-project-attributes-extractors";
+  import { PbxEditorRouteUtils } from "pbx-editor-route-utils";
+  import { PbxProjectListComponents } from "pbx-project-list-components";
+  import { PbxCartItemAdder } from "pbx-cart-item-adder";
+
+  const html = (strings, ...values) =>
+    String.raw({ raw: strings }, ...values);
+
+  const SHOP_ID = "{{ shop.metafields.printbox.shop_id }}";
+  const SHOPIFY_API_URL = '{{ shop.metafields.printbox.api_url2 }}';
+  const PBX_API_URL = '{{ shop.metafields.printbox.url }}';
+
+  const getLocale = () => `{{ localization.language.iso_code }}-{{ localization.country.iso_code }}`;
+
+  const shopifyConfigProvider = () => ({
+    apiUrl: '{{ shop.metafields.printbox.api_url2 }}',
+    pbxApiUrl: "{{ shop.metafields.printbox.url }}",
+    shopId: "{{ shop.metafields.printbox.shop_id }}",
+    variantId: "",
+    instanceId: '{{ shop.metafields.printbox.instance_id }}',
+    customerEmail: '{{ customer.email }}',
+    customerId: '{{ customer.id }}',
+    initPbxModuleId: null,
+    initPbxProductId: "",
+    initPbxProductFamilyId: "",
+    shopCurrency: "{{ shop.currency }}",
+    language: "{{ localization.language.iso_code }}",
+    locale: getLocale(),
+    storeName: '{{ shop.metafields.printbox.store_name }}',
+    pbxMetafieldCustomerId: '{{ customer.metafields.printbox.customer_id }}'
+  });
+
+  const {
+    initializePrintboxEditor,
+    pbxSessionKeyManager,
+    pbxConfigState
+  } = printboxModuleInitializer(shopifyConfigProvider);
+
+  const pbxProjectsApi = new PbxProjectsApiRepository({
+    editorApiUrl: PBX_API_URL,
+    pbxSessionKeyManager,
+    shopifyApiUrl: SHOPIFY_API_URL,
+    storeName: '{{ shop.metafields.printbox.store_name }}'
+  });
+  
+  const pbxCartItemAdder = new PbxCartItemAdder({
+    pbxProjectsApiRepository: pbxProjectsApi,
+  });
+
+  const setEditorConfigStateForProjectEdit = async (projectId) => {
+    const project = await pbxProjectsApi.getProjectData(projectId);
+    const { product, id } = project;
+
+    await getCurrentProductVariantId(project);
+
+    pbxConfigState.setProductId(product.id);
+    pbxConfigState.setProductFamilyId(product.productFamilyId);
+    pbxConfigState.setProjectId(id);
+  };
+
+  PbxEditorRouteUtils.onEditorPathExistsInUrl(async (url) => {
+    try {      
+      const projectId = url.hash.split("&").find(it => it.includes("projectId"))?.split("=")[1];
+
+      if (!projectId) {        
+        // clear path name from editor segment
+        const editorSegmentIndex = url.pathname.indexOf("/editor");
+        if (editorSegmentIndex !== -1) {
+          url.pathname = url.pathname.substring(0, editorSegmentIndex);
+        }
+
+        url.hash = "";
+        url.search = "";
+        history.pushState(null, "", url);
+
+        return;
+      }
+
+      initializePrintboxEditor(async () => {
+        await setEditorConfigStateForProjectEdit(projectId);
+      });
+
+    } catch (e) {
+      console.error(e);
+    }
+  });
+
+  PbxEditorRouteUtils.onEditorPathDoesntExistInUrl(async () => {
+    initializePrintboxEditor();
+  });
+
+  const getCurrentProductVariantId = async (project) => {
+    try {
+      const resp = await pbxProjectsApi.loadProductById({
+        project,
+        shopId: SHOP_ID
+    });
+
+      
+      const { id } = resp;
+      const parsedId = id.split("/").pop();
+      pbxConfigState.setVariantId(parsedId);
+
+      return parsedId;
+    } catch {
+      throw new Error("Something went wrong with getting product variant id");
+    }
+  };
+
+  const createDeleteProjectButton = (projectId) => PbxProjectListComponents.createButton({
+    onclick: async (event) => {
+      const button = event.currentTarget;
+      if (button.disabled) return;
+
+      const actionLoaderManager = new ActionLoaderManager({
+        actionName: "delete",
+        projectId
+      });
+
+      const removeProjectModalEl = document.querySelector("#pbx-remove-project");
+      removeProjectModalEl.classList.add("pbx-project-list-modal--visible");
+
+      const confirmButton = removeProjectModalEl.querySelector("#pbx-remove-project-confirmBtn");
+
+      removeProjectModalEl.querySelectorAll(".js-remove-project-btn").forEach(el => {
+        el.onclick = () =>
+          removeProjectModalEl.classList.remove("pbx-project-list-modal--visible");
+      });
+
+      confirmButton.onclick = async () => {
+        try {
+          actionLoaderManager.toggleLoaderState(true);
+          removeProjectModalEl.classList.remove("pbx-project-list-modal--visible");
+
+          await pbxProjectsApi.deleteProject(projectId);
+          await refreshProjectsTable();
+        } finally {
+          actionLoaderManager.toggleLoaderState(false);
+        }
+      };
+    },
+    textContent: "Delete",
+    icon: () => html`
+      <div data-project-id="${projectId}" data-action="delete">
+            {%- render 'pbx-icon-thrash' -%}
+      </div>
+      <span class="pbx-project-list__loader-icon" data-project-id="${projectId}" data-action="delete">
+        {%- render 'pbx-circle-loader' -%}
+      </span>
+      `
+  });
+
+  
+  const createDuplicateProjectButton = (projectId) => PbxProjectListComponents.createButton({
+    onclick: async (event) => {
+      const button = event.currentTarget;
+      if (button.disabled) return;
+      
+      const actionLoaderManager = new ActionLoaderManager({
+        actionName: "duplicate",
+        projectId
+      });
+
+      try {
+        actionLoaderManager.toggleLoaderState(true);
+        await pbxProjectsApi.duplicateProject(projectId);
+        await refreshProjectsTable();
+      } finally {
+        actionLoaderManager.toggleLoaderState(false);
+      }
+    },
+    textContent: "Duplicate", 
+    icon: () => `
+      <span data-project-id="${projectId}" data-action="duplicate">
+            {%- render 'pbx-icon-duplicate' -%}
+      </span>
+      <span class="pbx-project-list__loader-icon" data-project-id="${projectId}" data-action="duplicate">
+        {%- render 'pbx-circle-loader' -%}
+      </span>
+      `
+  });
+
+  const createEditProjectButton = (projectId) => PbxProjectListComponents.createButton({  
+  onclick: async (event) => {
+      const button = event.currentTarget;
+      if (button.disabled) return;
+
+      const actionLoaderManager = new ActionLoaderManager({   
+        actionName: "edit",
+        projectId
+      });
+
+      try {
+        actionLoaderManager.toggleLoaderState(true);
+        await setEditorConfigStateForProjectEdit(projectId);
+
+        publish("initEditor");
+        publish("openEditorModal");
+      } finally {
+        actionLoaderManager.toggleLoaderState(false);
+      }
+    },
+    textContent: "Edit",
+    icon: () => html`
+      <span data-project-id="${projectId}" data-action="edit">
+            {%- render 'pbx-icon-edit' -%}
+      </span>
+      <span class="pbx-project-list__loader-icon" data-project-id="${projectId}" data-action="edit">
+        {%- render 'pbx-circle-loader' -%}
+      </span>
+      `
+  });
+
+  const createPreviewProjectButton = (projectId) => PbxProjectListComponents.createButton({
+    onclick: async (event) => {
+      const button = event.currentTarget;
+      if (button.disabled) return;
+
+      const actionLoaderManager = new ActionLoaderManager({
+        actionName: "preview",
+        projectId
+      });
+
+      try {
+        actionLoaderManager.toggleLoaderState(true);
+        await setEditorConfigStateForProjectEdit(projectId);
+
+        publish("initEditor");
+        publish("openEditorModal");
+      } finally {
+        actionLoaderManager.toggleLoaderState(false);
+      }
+    },
+    textContent: "Preview",
+    icon: () => html`
+      <span data-project-id="${projectId}" data-action="preview">
+        {%- render 'pbx-icon-preview' -%}
+      </span>
+      <span class="pbx-project-list__loader-icon" data-project-id="${projectId}" data-action="preview">
+        {%- render 'pbx-circle-loader' -%}
+      </span>
+      `
+  });
+
+  const createAddToCartButton = ({ project }) => PbxProjectListComponents.createButton({
+    onclick: async (event) => {
+      const button = event.currentTarget;
+      if (button.disabled) return;
+
+      const actionLoaderManager = new ActionLoaderManager({
+        actionName: "add-to-cart",
+        projectId: project.id
+      });
+
+      try {
+        actionLoaderManager.toggleLoaderState(true);
+        const variantId = await getCurrentProductVariantId(project);
+        await pbxCartItemAdder.handleAddToCart({ project, variantId });
+      } finally {
+        actionLoaderManager.toggleLoaderState(false);
+      }
+    },
+    textContent: "Add to cart",
+    icon: () => html`
+      <span data-project-id="${project.id}" data-action="add-to-cart">
+           {%- render 'pbx-icon-add-to-cart' -%}
+      </span>
+      <span class="pbx-project-list__loader-icon" data-project-id="${project.id}" data-action="add-to-cart">
+        {%- render 'pbx-circle-loader' -%}
+      </span>
+      `
+  });
+
+  const createOrderAgainButton = ({ project }) => PbxProjectListComponents.createButton({
+    onclick: async (event) => {
+      const button = event.currentTarget;
+      if (button.disabled) return;
+
+      const actionLoaderManager = new ActionLoaderManager({
+        actionName: "order-again",
+        projectId: project.id
+      });
+
+      try {
+        actionLoaderManager.toggleLoaderState(true);
+        const duplicatedProject = await pbxProjectsApi.duplicateProject(project.id);
+        const variantId = await getCurrentProductVariantId(duplicatedProject);
+        await pbxCartItemAdder.handleAddToCart({ project: duplicatedProject, variantId });
+      } finally {
+        actionLoaderManager.toggleLoaderState(false);
+      }
+    },
+    textContent: "Order again",
+    icon: () => html`
+      <span data-project-id="${project.id}" data-action="order-again">
+           {%- render 'pbx-icon-add-to-cart' -%}
+      </span>
+      <span class="pbx-project-list__loader-icon" data-project-id="${project.id}" data-action="order-again">
+        {%- render 'pbx-circle-loader' -%}
+      </span>
+      `  
+  });
+
+  const refreshProjectsTable = async () => {
+    async function fetchData() {
+      try {
+        const projects = await pbxProjectsApi.loadProjectList();
+
+        projects.sort((a, b) => new Date(b.createTime) - new Date(a.createTime));
+
+        await updateTable(
+          projects
+        );
+      } catch (e) {
+        console.error(`Something went wrong with fetching project list => ${e}`);
+      }
+    }
+
+    const createTableItem = (className, innerHtml) => {
+      const div = document.createElement("div");
+      div.classList.add(className);
+      div.innerHTML = innerHtml;
+
+      return div;
+    };
+
+    const createActionsElement = ({ project }) => {
+      const div = document.createElement("div");
+      div.classList.add("col-7-8");
+      div.classList.add("pbx-project-information__actions");
+
+      if (project.isOrdered) {
+        div.appendChild(createOrderAgainButton({ project }));
+        div.appendChild(createPreviewProjectButton(project.id));
+        div.appendChild(createDuplicateProjectButton(project.id));
+      } else {
+        div.appendChild(createDeleteProjectButton(project.id));
+        div.appendChild(createDuplicateProjectButton(project.id));
+        div.appendChild(createEditProjectButton(project.id));
+
+        if(!project.lastSavedTime) return div;
+
+        div.appendChild(createAddToCartButton({ project }));
+      }
+
+      return div;
+    };
+
+    const projectAttributesLoader = async (projects) => {
+      const pfFamilies = await pbxProjectsApi.loadProductFamilies(PbxProjectAttributesExtractors.getProductFamiliesIdsCollectionFromProjectList(projects));
+
+      return (project) => {
+        const foundProjectPf = pfFamilies.find(it => Number(it.id) === Number(project.productFamilyId));
+        return PbxProjectAttributesExtractors.getAttributesList(project, foundProjectPf);
+      };
+    };
+
+    async function updateTable(projects) {
+      const table = document.querySelector(".pbx-project-list");
+      table.innerHTML = "";
+      table.innerHTML += PbxProjectListComponents.tableHeaders();
+
+      if (!projects.length) {
+        table.appendChild(createTableItem("col-full", `<div class="pbx-project-list__no-project-info">You don't have any projects yet.</div>`));
+        return;
+      }
+
+      const getProjectAttributes = await projectAttributesLoader(projects);
+
+      projects.forEach(project => {
+
+        const rwdProjectInformationList = [
+          {
+            key: "Editable",
+            value: project.status
+          },
+          {
+            key: "Created",
+            value: new Date(project.createTime).toLocaleDateString()
+          },
+          {
+            key: "Modified",
+            value: project.updateTime ? new Date(project.updateTime).toLocaleDateString() : "N/A"
+          },
+          {
+            key: "Ordered",
+            value: project.isOrdered ? "ordered" : "not ordered"
+          }
+        ];
+
+        table.appendChild(createTableItem("col-1-2", html`
+        <div class="pbx-project-information">
+          <div class="pbx-project-information__thumbnail">
+            <img src="${project.thumbnailUrl}" alt="Thumbnail for ${project.name}" />
+          </div>
+          <div class="pbx-project-information__attributes">
+          <button class="pbx-project-information__attributes__edit-btn js-edit-project-btn" data-project-id="${project.id}" data-project-name="${project.name}">
+              <span class="pbx-project-information__attributes__name">${project.name}</span>
+              {%- render 'pbx-icon-pencil' -%}
+          </button>
+          
+            <div class="pbx-project-information__attributes__list">
+              ${PbxProjectListComponents.createAttributeListComponent(getProjectAttributes(project))}
+            </div>
+            <div class="mobile-only">
+              ${PbxProjectListComponents.createAttributeListComponent(rwdProjectInformationList)}
+            </div>
+          <span
+              class="mobile-only pbx-project-information__deletion-info">The project will be removed in ${project.daysToDeletion} day(s)
+            </span>
+          </div>
+        </div>
+        `));
+
+        table.appendChild(createTableItem("col-2-3", html`
+          <span class="pbx-project-list__text">${project.status.toUpperCase()}</span>`));
+
+        table.appendChild(createTableItem("col-3-4", html`<span
+          class="pbx-project-list__text">${new Date(project.createTime).toLocaleDateString()}</span>`));
+
+        table.appendChild(createTableItem("col-4-5", html`
+          <span
+            class="pbx-project-list__text">${project.updateTime ? new Date(project.updateTime).toLocaleDateString() : "N/A"}</span>
+        `));
+
+        table.appendChild(createTableItem("col-5-6", html`
+          <span class="pbx-project-list__text">${project.isOrdered ? "ORDERED" : "NOT ORDERED"}</span>
+        `));
+
+        table.appendChild(createTableItem("col-6-7", html`
+          <div class="pbx-project-list__deletion-info">The project will be removed in ${project.daysToDeletion} day(s)
+          </div>
+        `));
+
+        table.appendChild(createActionsElement({ project }));
+
+        table.appendChild(createTableItem("project-divider", ""));
+      });
+
+      document.querySelectorAll(".js-edit-project-btn").forEach(btn => {
+        btn.addEventListener("click", (event) => {
+          const projectId = event.currentTarget.dataset.projectId;
+          const projectName = event.currentTarget.dataset.projectName;
+
+          const editModal = document.getElementById('pbx-edit-project-name');
+          const editInput = document.getElementById('pbx-edit-project-name-input');
+          
+          editModal.classList.add('pbx-project-list-modal--visible');
+          editInput.value = projectName;
+
+
+          const closeModal = () => {
+            editModal.classList.remove('pbx-project-list-modal--visible');
+          };
+
+          const closeBtn = editModal.querySelector('.pbx-project-list-modal__close-btn');
+          const cancelBtn = document.getElementById('pbx-edit-project-name-cancelBtn');
+          const saveBtn = document.getElementById('pbx-edit-project-name-saveBtn');
+          const loader = document.getElementById('pbx-edit-project-name-loader');
+
+
+          saveBtn.disabled = true;
+          
+          editInput.addEventListener('input', (e) => {
+            saveBtn.disabled = e.target.value === projectName;
+          });
+
+          saveBtn.onclick = async () => {
+            const editForm = document.getElementById('pbx-edit-project-name-input');
+            if (!editForm.checkValidity()) {
+              editForm.reportValidity();
+              return;
+            }
+
+            const newName = editForm.value;
+            try {
+              closeBtn.disabled = true;
+
+              saveBtn.style.display = 'none';
+              cancelBtn.style.display = 'none';
+              loader.style.display = 'block';
+
+              await pbxProjectsApi.editProjectName(projectId, newName);
+              await refreshProjectsTable();
+            } finally {
+              closeBtn.disabled = false;
+              saveBtn.style.display = 'inline-block';
+              cancelBtn.style.display = 'inline-block';
+              loader.style.display = 'none';
+
+              closeModal();
+            }
+          };
+
+          closeBtn.onclick = closeModal;
+          cancelBtn.onclick = closeModal;
+        });
+      });
+    }
+
+    await fetchData();
+  };
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const modal = document.getElementById("customModal");
+
+    if (!modal)
+      throw new Error("HTML Elements required to pbx modal not found");
+
+    subscribe("openEditorModal", () => {
+      modal.style.display = "block";
+    });
+
+    subscribe("closeEditorModal", () => {
+      modal.style.display = "none";
+    });
+
+    refreshProjectsTable();
+  });
+
+  class ActionLoaderManager {
+    #actionName;
+    #projectId;
+
+    constructor({actionName, projectId}) {
+      this.#actionName = actionName;
+      this.#projectId = projectId;
+    }
+
+  
+     toggleLoaderState(state) {
+      const actionButton = document.querySelector(`[data-project-id="${this.#projectId}"][data-action="${this.#actionName}"]`);
+      const loader = document.querySelector(`[data-project-id="${this.#projectId}"][data-action="${this.#actionName}"].pbx-project-list__loader-icon`);
+      
+      
+        if (state) {
+        actionButton.style.display = 'none';
+        loader.style.display = 'block';
+        this.#toggleAllRelatedActionsAvailability(true);
+      } else {
+        actionButton.style.display = 'block'; 
+        loader.style.display = 'none';
+        this.#toggleAllRelatedActionsAvailability(false);
+      }
+    }
+
+    #toggleAllRelatedActionsAvailability(state) {
+      document.querySelectorAll(`[data-project-id][data-action]`)
+        .forEach(el => {
+          const actionButton = el.closest('.pbx-project-action-btn');
+          if (actionButton) {
+            actionButton.disabled = state;
+          }
+        });
+    }
+  }
+</script>
+
+<div id="pbx-remove-project" class="pbx-project-list-modal">
+  <div class="pbx-project-list-modal__modal-content">
+    <span class="js-remove-project-btn pbx-project-list-modal__close-btn">&times;</span>
+    <h2>Delete Project</h2>
+    <p>Are you sure you want to delete this project?</p>
+    <button class="pbx-project-list-modal__dangerBtn" id="pbx-remove-project-confirmBtn">Yes</button>
+    <button id="pbx-remove-project-cancelBtn" class="js-remove-project-btn pbx-project-list-modal__successBtn">No</button>
+  </div>
+</div>
+
+<div id="pbx-edit-project-name" class="pbx-project-list-modal">
+  <div class="pbx-project-list-modal__modal-content">
+    <span class="pbx-project-list-modal__close-btn">&times;</span>
+    <h2>Edit project name</h2>
+    <input
+      type="text"
+      id="pbx-edit-project-name-input"
+      required
+      minlength="1"
+      placeholder="Enter project name"
+      oninvalid="this.setCustomValidity('Please enter a project name')"
+      oninput="this.setCustomValidity('')" />
+    <button id="pbx-edit-project-name-saveBtn" class="pbx-project-list-modal__successBtn">Save</button>
+    <button id="pbx-edit-project-name-cancelBtn" class="pbx-project-list-modal__dangerBtn">Cancel</button>
+    <div id="pbx-edit-project-name-loader" class="pbx-project-list-modal__loader">
+      {%- render 'pbx-circle-loader' -%}
+    </div>
+  </div>
+</div>
+
+<div class="pbx-project-list"></div>
+
+<div id="customModal" style="display:none;">
+  <div id="modalContent">
+    <div id="dynamicContent">
+      <div id="app"></div>
+    </div>
+  </div>
+</div>

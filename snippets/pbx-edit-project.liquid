@@ -1,0 +1,83 @@
+<style>
+  .pbx-editor-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 10000;
+    width: 100%;
+    min-height: 100vh;
+    background-color: #fff;
+  }
+</style>
+
+<main>
+  <div class="pbx-editor-container">
+    <div id="app"></div>
+  </div>
+</main>
+
+<script type="module">
+  import { printboxModuleInitializer } from "printbox";
+  import { PbxEditorConfigState } from "pbx-editor-config-state";
+
+  const { familyId, projectId, variantId } = retrieveProjectsSettings();
+
+  const getLocale = () => `{{ localization.language.iso_code }}-{{ localization.country.iso_code }}`;
+
+  const shopifyConfigProvider = () => ({
+    apiUrl: '{{ shop.metafields.printbox.api_url2 }}',
+    shopId: "{{ shop.metafields.printbox.shop_id }}",
+    instanceId: '{{ shop.metafields.printbox.instance_id }}',
+    customerEmail: '{{ customer.email }}',
+    customerId: '{{ customer.id }}',
+    pbxMetafieldCustomerId: '{{ customer.metafields.printbox.customer_id }}',
+    shopCurrency: "{{ shop.currency }}",
+    language: "{{ localization.language.iso_code }}",
+    locale: getLocale(),
+    storeName: '{{ shop.metafields.printbox.store_name }}',
+    pbxApiUrl: "{{ shop.metafields.printbox.url }}"
+  });
+
+  const { initializePrintboxEditor } = printboxModuleInitializer(shopifyConfigProvider);
+
+  await initializePrintboxEditor(() => {
+    PbxEditorConfigState.setProductFamilyId(familyId);
+    PbxEditorConfigState.setProjectId(projectId);
+    PbxEditorConfigState.setVariantId(variantId);
+  });
+
+
+  function retrieveProjectsSettings() {
+    let url = new URL(window.location.href);
+    let params = new URLSearchParams(url.search);
+    const projectId = params.get("projectId");
+    const familyId = params.get("familyId");
+    const variantId = params.get("variantId");
+    const skipWhenAddToCart = params.get("skipWhenAddToCart");
+
+    let newUrl = new URL(window.location.href);
+    newUrl.search = skipWhenAddToCart ? `?skipWhenAddToCart=${skipWhenAddToCart}` : '';
+    window.history.replaceState({}, document.title, newUrl.toString());
+
+    if (!projectId || !familyId || !variantId) return retrieveProjectSettingsFromLocalStorage();
+
+    localStorage.setItem("currentEditingPbxProjectSettings", JSON.stringify({projectId, familyId, variantId}));
+
+    return { projectId, familyId, variantId };  
+  }
+
+  function retrieveProjectSettingsFromLocalStorage() {
+    try {
+      const restoredProjectSettings = JSON.parse(localStorage.getItem("currentEditingPbxProjectSettings"));
+
+      return {
+        projectId: restoredProjectSettings.projectId,
+        familyId: restoredProjectSettings.familyId,
+        variantId: restoredProjectSettings.variantId
+      };
+
+    } catch {
+      throw new Error("failed to load project settings");
+    }
+  }
+</script>

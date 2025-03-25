@@ -1,0 +1,31 @@
+{{ 'product-modal.css' | asset_url | stylesheet_tag }}
+
+<script>
+  document.addEventListener("DOMContentLoaded", function() {
+    const modal = document.getElementById("customModal");
+    const openModalButton = document.getElementById('openModalButton');
+
+    if (!modal || !openModalButton)
+      throw new Error("HTML Elements required to pbx modal not found");
+
+    subscribe("openEditorModal", () => {
+      modal.style.display = "block";
+    });
+
+    subscribe("closeEditorModal", () => {
+      modal.style.display = "none";
+    });
+
+    openModalButton.addEventListener('click', function () {
+        publish('initEditor');
+    });
+  });
+</script>
+
+<div id="customModal" style="display:none;">
+  <div id="modalContent">
+    <div id="dynamicContent">
+      {%- render 'printbox' -%}
+    </div>
+  </div>
+</div>
